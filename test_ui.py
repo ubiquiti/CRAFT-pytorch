@@ -10,6 +10,7 @@ import os
 import shutil
 import sys
 import time
+from urllib import parse
 import zipfile
 from collections import OrderedDict
 from typing import List, Tuple
@@ -28,6 +29,8 @@ import file_utils
 import imgproc
 from craft import CRAFT
 
+label_to_id = {'0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, 'A': 10, 'B': 11, 'C': 12, 'D': 13, 'E': 14, 'F': 15, 'G': 16, 'H': 17, 'I': 18, 'J': 19, 'K': 20, 'L': 21, 'M': 22, 'N': 23, 'O': 24, 'P': 25, 'Q': 26, 'R': 27, 'S': 28, 'T': 29, 'U': 30, 'V': 31, 'W': 32, 'X': 33, 'Y': 34, 'Z': 35}
+
 
 def copyStateDict(state_dict):
     if list(state_dict.keys())[0].startswith("module"):
@@ -43,6 +46,7 @@ def copyStateDict(state_dict):
 def str2bool(v):
     return v.lower() in ("yes", "y", "true", "t", "1")
 
+
 parser = argparse.ArgumentParser(description='CRAFT Text Detection')
 parser.add_argument('--trained_model', default='weights/craft_mlt_25k.pth', type=str, help='pretrained model')
 parser.add_argument('--text_threshold', default=0.7, type=float, help='text confidence threshold')
@@ -57,18 +61,8 @@ parser.add_argument('--show_time', default=False, action='store_true', help='sho
 parser.add_argument('--test_folder', default='/data/', type=str, help='folder path to input images')
 parser.add_argument('--refine', default=False, action='store_true', help='enable link refiner')
 parser.add_argument('--refiner_model', default='weights/craft_refiner_CTW1500.pth', type=str, help='pretrained refiner model')
-
+parser.add_argument('--char_level', default=True, type=str2bool, help='character level bbox. If false, then word level')
 args = parser.parse_args()
-
-
-""" For test images in a folder """
-image_list, _, _ = file_utils.get_files(args.test_folder)
-
-result_folder = args.result_folder
-if os.path.isdir(result_folder):
-    shutil.rmtree(result_folder)
-
-os.mkdir(result_folder)
 
 
 def test_net(net, image, text_threshold, link_threshold, low_text, cuda, poly, refine_net=None):
@@ -103,7 +97,10 @@ def test_net(net, image, text_threshold, link_threshold, low_text, cuda, poly, r
     t1 = time.time()
 
     # Post-processing
-    boxes, polys = craft_utils.getDetBoxes(score_text, score_link, text_threshold, link_threshold, low_text, poly)
+    if args.char_level:
+        boxes, polys = craft_utils.getDetBoxes(score_text - 0.25 * score_link, score_text - 0.25 * score_link, text_threshold, link_threshold, low_text, poly)
+    else:
+        boxes, polys = craft_utils.getDetBoxes(score_text, score_text, text_threshold, link_threshold, low_text, poly)        
 
     # coordinate adjustment
     boxes = craft_utils.adjustResultCoordinates(boxes, ratio_w, ratio_h)
@@ -147,19 +144,26 @@ def generate_pseudo_label_ui(image_path: str, labels: List[str], label_to_id: di
     res_file = dirname + "/" + filename + '.txt'
     img_file = dirname + "/" + filename + '.jpg'
 
-
     with open(res_file, 'w') as f:
         for i, box in enumerate(bboxes):
-            # print(f"box:{box}")
-            # poly = np.array(box).astype(np.int32).reshape((-1))
-            # print(f"poly:{poly}")
-            x1, y1, x2, y2 = int(box[0][0]), int(box[0][1]), int(box[2][0]), int(box[2][1])
+            poly = np.array(box).astype(np.int32).reshape((-1))
+            x1 = min(int(box[0][0]), int(box[3][0]))
+            y1 = min(int(box[0][1]), int(box[1][1]))
+            x2 = max(int(box[1][0]), int(box[2][0]))
+            y2 = max(int(box[2][1]), int(box[3][1]))
+
             ui_format = f"{labels[i]} 0 {label_to_id[labels[i]]} -1 1 {x1/width} {y1/height} {x2/width} {y2/height} 0\n"
             f.write(ui_format)
 
+            # Draw lines
             # poly = poly.reshape(-1, 2)
             # cv2.polylines(img, [poly.reshape((-1, 1, 2))], True, color=(0, 0, 255), thickness=2)
-    #         img = cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), 5)
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            fontScale = 1
+            color = (0, 0, 255)
+            thickness = 2
+            img = cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), 5)
+            cv2.putText(img, labels[i], (x1, y1+5), font, fontScale, color, thickness, cv2.LINE_AA, False)
 
     # Save result image
     cv2.imwrite(img_file, img)
@@ -181,10 +185,13 @@ def critera(bboxes: np.ndarray, labels: str) -> Tuple[bool, np.ndarray]:
     if type(bboxes) != np.ndarray or bboxes.size == 0:
         return False , bboxes
 
-    dim = bboxes.shape[0]
-    bboxes = bboxes.reshape(dim, -1)
-    area = (bboxes[:, 2] - bboxes[:, 0]) * (bboxes[:, 3] - bboxes[:, 1])
-    bboxes = bboxes[(area >= 0.75*area.mean()) & (area <= 1.25*area.mean())]
+    # Filter bboxes by area.
+    area = (bboxes[:, 2,0] - bboxes[:, 0,0]) * (bboxes[:, 2,1] - bboxes[:, 0,1])
+    mask = (area >= 0.75*area.mean()) & (area <= 1.25*area.mean())
+    bboxes = bboxes[mask, :]
+    # Sort bboxes along x-axis.
+    bboxes = bboxes[np.argsort(bboxes[:, 0, 0]), :]
+
 
     if len(labels) == len(bboxes):
         return True, bboxes
@@ -192,7 +199,7 @@ def critera(bboxes: np.ndarray, labels: str) -> Tuple[bool, np.ndarray]:
         return False, bboxes
 
 
-if __name__ == '__main__':
+def main():
     # load net
     net = CRAFT()     # initialize
 
@@ -228,8 +235,7 @@ if __name__ == '__main__':
 
     t = time.time()
 
-    label_to_id = {'0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, 'A': 10, 'B': 11, 'C': 12, 'D': 13, 'E': 14, 'F': 15, 'G': 16, 'H': 17, 'I': 18, 'J': 19, 'K': 20, 'L': 21, 'M': 22, 'N': 23, 'O': 24, 'P': 25, 'Q': 26, 'R': 27, 'S': 28, 'T': 29, 'U': 30, 'V': 31, 'W': 32, 'X': 33, 'Y': 34, 'Z': 35}
-
+    image_list = [os.path.join(args.test_folder, f) for f in os.listdir(args.test_folder) if f.endswith(".jpg")]
     # load data
     for k, image_path in enumerate(image_list):
         print("Test image {:d}/{:d}: {:s}".format(k+1, len(image_list), image_path), end='\r')
@@ -238,13 +244,19 @@ if __name__ == '__main__':
         bboxes, polys, score_text = test_net(net, image, args.text_threshold, args.link_threshold, args.low_text, args.cuda, args.poly, refine_net)
         filename, file_ext = os.path.splitext(os.path.basename(image_path))
 
-        # # save score text
-        # mask_file = result_folder + "/res_" + filename + '_mask.jpg'
-        # cv2.imwrite(mask_file, score_text)
+        # save score text
+        mask_file = args.result_folder + "/" + filename + '_mask.jpg'
+        cv2.imwrite(mask_file, score_text)
 
         labels = list(filename.split("_")[0])
         flag, bboxes = critera(bboxes, labels)
+
         if flag == True:
-            generate_pseudo_label_ui(image_path, labels, label_to_id, polys, result_folder)
+            generate_pseudo_label_ui(image_path, labels, label_to_id, bboxes, args.result_folder)
 
     print("elapsed time : {}s".format(time.time() - t))
+
+
+if __name__ == '__main__':
+    main()
+
