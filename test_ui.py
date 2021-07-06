@@ -98,7 +98,7 @@ def test_net(net, image, text_threshold, link_threshold, low_text, cuda, poly, r
 
     # Post-processing
     if args.char_level:
-        boxes, polys = craft_utils.getDetBoxes(score_text - 0.25 * score_link, score_text - 0.25 * score_link, text_threshold, link_threshold, low_text, poly)
+        boxes, polys = craft_utils.getDetBoxes(score_text, score_text, text_threshold, link_threshold, low_text, poly)
     else:
         boxes, polys = craft_utils.getDetBoxes(score_text, score_text, text_threshold, link_threshold, low_text, poly)        
 
@@ -155,21 +155,11 @@ def generate_pseudo_label_ui(image_path: str, labels: List[str], label_to_id: di
             ui_format = f"{labels[i]} 0 {label_to_id[labels[i]]} -1 1 {x1/width} {y1/height} {x2/width} {y2/height} 0\n"
             f.write(ui_format)
 
-            # Draw lines
-            # poly = poly.reshape(-1, 2)
-            # cv2.polylines(img, [poly.reshape((-1, 1, 2))], True, color=(0, 0, 255), thickness=2)
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            fontScale = 1
-            color = (0, 0, 255)
-            thickness = 2
-            img = cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), 5)
-            cv2.putText(img, labels[i], (x1, y1+5), font, fontScale, color, thickness, cv2.LINE_AA, False)
-
     # Save result image
     cv2.imwrite(img_file, img)
 
 
-def critera(bboxes: np.ndarray, labels: str) -> Tuple[bool, np.ndarray]:
+def critera(bboxes: np.ndarray, labels: List[str]) -> Tuple[bool, np.ndarray]:
     """Check predict boxes is good enough for pseudo labeling
 
     Filter small boxes and compare #boxes == #labels
@@ -187,7 +177,7 @@ def critera(bboxes: np.ndarray, labels: str) -> Tuple[bool, np.ndarray]:
 
     # Filter bboxes by area.
     area = (bboxes[:, 2,0] - bboxes[:, 0,0]) * (bboxes[:, 2,1] - bboxes[:, 0,1])
-    mask = (area >= 0.75*area.mean()) & (area <= 1.25*area.mean())
+    mask = (area >= 0.5*area.mean()) & (area <= 1.5*area.mean())
     bboxes = bboxes[mask, :]
     # Sort bboxes along x-axis.
     bboxes = bboxes[np.argsort(bboxes[:, 0, 0]), :]
@@ -235,6 +225,15 @@ def main():
 
     t = time.time()
 
+    image_dir = os.path.join(args.result_folder, "image")
+    label_dir = os.path.join(args.result_folder, "label")
+
+    if not os.path.exists(image_dir):
+        os.makedirs(image_dir)
+    if not os.path.exists(label_dir):
+        os.makedirs(label_dir)
+
+
     image_list = [os.path.join(args.test_folder, f) for f in os.listdir(args.test_folder) if f.endswith(".jpg")]
     # load data
     for k, image_path in enumerate(image_list):
@@ -244,15 +243,14 @@ def main():
         bboxes, polys, score_text = test_net(net, image, args.text_threshold, args.link_threshold, args.low_text, args.cuda, args.poly, refine_net)
         filename, file_ext = os.path.splitext(os.path.basename(image_path))
 
-        # save score text
-        mask_file = args.result_folder + "/" + filename + '_mask.jpg'
-        cv2.imwrite(mask_file, score_text)
-
         labels = list(filename.split("_")[0])
         flag, bboxes = critera(bboxes, labels)
 
         if flag == True:
-            generate_pseudo_label_ui(image_path, labels, label_to_id, bboxes, args.result_folder)
+            generate_pseudo_label_ui(image_path, labels, label_to_id, bboxes, label_dir)
+            image_file = f"{image_dir}/{filename}.jpg"
+            cv2.imwrite(image_file, image)
+
 
     print("elapsed time : {}s".format(time.time() - t))
 

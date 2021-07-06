@@ -16,8 +16,6 @@ setup(
     packages=find_packages(exclude=["figures"]),
     include_package_data=True,
     install_requires=[
-        "torch>=1.6.0",
-        "torchvision>=0.7.0",
         "opencv-python>=4.2.0.32",
         "scikit-image>=0.14.2",
         "scipy>=1.1.0",
