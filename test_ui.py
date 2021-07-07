@@ -20,6 +20,7 @@ import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
+from tqdm import tqdm
 from PIL import Image
 from skimage import io
 from torch.autograd import Variable
@@ -236,7 +237,7 @@ def main():
 
     image_list = [os.path.join(args.test_folder, f) for f in os.listdir(args.test_folder) if f.endswith(".jpg")]
     # load data
-    for k, image_path in enumerate(image_list):
+    for k, image_path in enumerate(tqdm(image_list)):
         print("Test image {:d}/{:d}: {:s}".format(k+1, len(image_list), image_path), end='\r')
         image = imgproc.loadImage(image_path)
 

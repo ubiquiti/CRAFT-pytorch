@@ -13,7 +13,7 @@ setup(
     description="CRAFT: Character-Region Awareness For Text detection",
     # Choose your license
     license="MIT",
-    packages=find_packages(exclude=["figures"]),
+    packages=["./"],
     include_package_data=True,
     install_requires=[
         "opencv-python>=4.2.0.32",
