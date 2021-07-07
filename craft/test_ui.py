@@ -25,10 +25,10 @@ from PIL import Image
 from skimage import io
 from torch.autograd import Variable
 
-import craft_utils
-import file_utils
-import imgproc
-from craft import CRAFT
+from craft import craft_utils
+from craft import file_utils
+from craft import imgproc
+from craft.craft import CRAFT
 
 label_to_id = {'0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, 'A': 10, 'B': 11, 'C': 12, 'D': 13, 'E': 14, 'F': 15, 'G': 16, 'H': 17, 'I': 18, 'J': 19, 'K': 20, 'L': 21, 'M': 22, 'N': 23, 'O': 24, 'P': 25, 'Q': 26, 'R': 27, 'S': 28, 'T': 29, 'U': 30, 'V': 31, 'W': 32, 'X': 33, 'Y': 34, 'Z': 35}
 
