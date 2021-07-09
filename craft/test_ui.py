@@ -28,9 +28,7 @@ from torch.autograd import Variable
 from craft import craft_utils
 from craft import file_utils
 from craft import imgproc
-from craft.craft import CRAFT
-
-label_to_id = {'0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, 'A': 10, 'B': 11, 'C': 12, 'D': 13, 'E': 14, 'F': 15, 'G': 16, 'H': 17, 'I': 18, 'J': 19, 'K': 20, 'L': 21, 'M': 22, 'N': 23, 'O': 24, 'P': 25, 'Q': 26, 'R': 27, 'S': 28, 'T': 29, 'U': 30, 'V': 31, 'W': 32, 'X': 33, 'Y': 34, 'Z': 35}
+from craft.craftnet import CRAFT
 
 
 def copyStateDict(state_dict):
@@ -62,7 +60,7 @@ parser.add_argument('--show_time', default=False, action='store_true', help='sho
 parser.add_argument('--test_folder', default='/data/', type=str, help='folder path to input images')
 parser.add_argument('--refine', default=False, action='store_true', help='enable link refiner')
 parser.add_argument('--refiner_model', default='weights/craft_refiner_CTW1500.pth', type=str, help='pretrained refiner model')
-parser.add_argument('--char_level', default=True, type=str2bool, help='character level bbox. If false, then word level')
+parser.add_argument('--names', type=str, help='names of each categories, as yolo format.')
 args = parser.parse_args()
 
 
@@ -97,11 +95,8 @@ def test_net(net, image, text_threshold, link_threshold, low_text, cuda, poly, r
     t0 = time.time() - t0
     t1 = time.time()
 
-    # Post-processing
-    if args.char_level:
-        boxes, polys = craft_utils.getDetBoxes(score_text, score_text, text_threshold, link_threshold, low_text, poly)
-    else:
-        boxes, polys = craft_utils.getDetBoxes(score_text, score_text, text_threshold, link_threshold, low_text, poly)        
+
+    boxes, polys = craft_utils.getDetBoxes(score_text, score_text, text_threshold, link_threshold, low_text, poly)        
 
     # coordinate adjustment
     boxes = craft_utils.adjustResultCoordinates(boxes, ratio_w, ratio_h)
@@ -155,9 +150,6 @@ def generate_pseudo_label_ui(image_path: str, labels: List[str], label_to_id: di
 
             ui_format = f"{labels[i]} 0 {label_to_id[labels[i]]} -1 1 {x1/width} {y1/height} {x2/width} {y2/height} 0\n"
             f.write(ui_format)
-
-    # Save result image
-    cv2.imwrite(img_file, img)
 
 
 def critera(bboxes: np.ndarray, labels: List[str]) -> Tuple[bool, np.ndarray]:
@@ -226,14 +218,22 @@ def main():
 
     t = time.time()
 
-    image_dir = os.path.join(args.result_folder, "image")
-    label_dir = os.path.join(args.result_folder, "label")
+    image_out_dir = os.path.join(args.result_folder, "image")
+    label_out_dir = os.path.join(args.result_folder, "label")
 
-    if not os.path.exists(image_dir):
-        os.makedirs(image_dir)
-    if not os.path.exists(label_dir):
-        os.makedirs(label_dir)
+    if not os.path.exists(image_out_dir):
+        os.makedirs(image_out_dir)
+    if not os.path.exists(label_out_dir):
+        os.makedirs(label_out_dir)
 
+    # Read names
+    names = []
+    label_to_id = {}
+    with open(args.names) as fin:
+        lines = fin.readlines()
+        names = [n.strip() for n in lines]
+    label_to_id = {c:i for i, c in enumerate(names)}
+    shutil.copyfile(args.names, f"{args.result_folder}/{os.path.basename(args.names)}")
 
     image_list = [os.path.join(args.test_folder, f) for f in os.listdir(args.test_folder) if f.endswith(".jpg")]
     # load data
@@ -244,13 +244,20 @@ def main():
         bboxes, polys, score_text = test_net(net, image, args.text_threshold, args.link_threshold, args.low_text, args.cuda, args.poly, refine_net)
         filename, file_ext = os.path.splitext(os.path.basename(image_path))
 
-        labels = list(filename.split("_")[0])
+        # Read labels
+        label_dir = "/".join(image_path.split("/")[:-2]) + "/" + image_path.split("/")[-2].replace("image", "label")
+        label_path = f"{label_dir}/{filename}.txt"
+        labels = []
+        with open(label_path, "r") as fin:
+            lines = fin.readlines()
+            labels = [l.split(" ")[0] for l in lines]
+
         flag, bboxes = critera(bboxes, labels)
 
         if flag == True:
-            generate_pseudo_label_ui(image_path, labels, label_to_id, bboxes, label_dir)
-            image_file = f"{image_dir}/{filename}.jpg"
-            cv2.imwrite(image_file, image)
+            generate_pseudo_label_ui(image_path, labels, label_to_id, bboxes, label_out_dir)
+            image_file = f"{image_out_dir}/{filename}.jpg"
+            cv2.imwrite(image_file, cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
 
 
     print("elapsed time : {}s".format(time.time() - t))
